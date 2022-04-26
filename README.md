@@ -1,2 +1,3 @@
-# AtoM-Event-Date-Parser
-Date parser for AtoM CSV eventDates, eventStartDates, eventEndDates
+# AtoM Event Date Parser
+
+Date parser for eventDates, eventStartDates, eventEndDates in [AtoM](https://accesstomemory.org) CSV templates.
