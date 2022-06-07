@@ -140,11 +140,11 @@ class TestParseWithStartEndDatesPresent_IgnoreEventActors:
 
     @pytest.mark.parametrize('event_dates,start_dates,end_dates,ed_expect,start_expect,end_expect', [
         # End date outside
-        ('March 2001', '2000-03-01', '2002-02-02', '2000-2002', '2000-03-01', '2002-02-02'),
+        ('March 2001', '2000-03-01', '2002-02-02', 'March 1, 2000 - February 2, 2002', '2000-03-01', '2002-02-02'),
         # Start date outside
-        ('March 2001', '2001-02-15', '2001-03-31', '2001', '2001-02-15', '2001-03-31'),
+        ('March 2001', '2001-02-15', '2001-03-31', 'February 15, 2001 - March 31, 2001', '2001-02-15', '2001-03-31'),
         # Both outside
-        ('March 2001', '1999-02-15', '2001-04-04', '1999-2001', '1999-02-15', '2001-04-04'),
+        ('March 2001', '1999-02-15', '2001-04-04', 'February 15, 1999 - April 4, 2001', '1999-02-15', '2001-04-04'),
     ])
     def test_start_end_dates_outside_of_event_dates(self, event_dates, start_dates, end_dates,
                                                     ed_expect, start_expect, end_expect):
