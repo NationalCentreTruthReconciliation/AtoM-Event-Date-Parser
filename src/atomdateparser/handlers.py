@@ -1,10 +1,14 @@
+''' Regular expression-based date parsers
+'''
 from abc import abstractmethod, ABC
 from calendar import monthrange
 from collections import namedtuple
 import calendar
 import datetime
-import dateparser
 import re
+
+import dateparser
+
 
 ABBREV_MONTH_WORDS = list(calendar.month_abbr)
 
@@ -17,6 +21,51 @@ EventDate = namedtuple('EventDate', 'date,start,end')
 EventDate.__doc__ = (
     'Represents a complete AtoM eventDate, with a start and end range'
 )
+
+
+DELIM = r'[-—\./]'
+RANGE_DELIM = r'\s*(?:-|—|and|to)\s*'
+UNKNOWN_PORTION = r'(?:00|[Xx]{1,2}|\*+|\?+)'
+
+DECADE_NUM = r'(?P<%s>[1-2]\d{2})(?:-|—|_|0[\'❜’]?s)'
+YEAR_NUM = r'(?P<%s>[1-2]\d{3})'
+MONTH_NUM = r'(?P<%s>1[0-2]|0?[1-9])'
+MONTH_NAME = (
+    r'(?P<%s>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
+    r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
+    r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)'
+)
+DATE_NUM = r'(?P<%s>3[0-1]|[1-2][0-9]|0?[1-9])'
+
+PERMISSIVE_YEAR_DATE = (
+    YEAR_NUM + '(?:' + DELIM + UNKNOWN_PORTION + DELIM + UNKNOWN_PORTION + ')?'
+)
+
+
+def has_group(match, group):
+    ''' Determine if a regex match has the specified group
+    '''
+    try:
+        return bool(match.group(group))
+    except IndexError:
+        return False
+
+
+def anchor(regex_string: str) -> str:
+    ''' Add anchors to start and end of regular expression string.
+    '''
+
+    if not regex_string:
+        return '^$'
+
+    if regex_string[0] == '^' and regex_string[-1] == '$':
+        return regex_string
+    if regex_string[0] == '^' and not regex_string[-1] == '$':
+        return regex_string + '$'
+    if regex_string[0] != '^' and regex_string[-1] == '$':
+        return '^' + regex_string
+
+    return '^' + regex_string + '$'
 
 
 class DateHandler(ABC):
@@ -40,41 +89,56 @@ class BaseDateHandler(DateHandler):
         return handler
 
     @abstractmethod
-    def handle(self, date: str):
+    def handle(self, date: str) -> EventDate:
         if self._next_handler:
             return self._next_handler.handle(date)
         raise UnknownDateFormat('Could not handle date "{}"'.format(date))
 
 
 class UnknownDateHandler(BaseDateHandler):
+    ''' Handle unknown dates by returning the configured unknown date
+    '''
+
     NO_DATE = re.compile(
-        r'(?i)^$|^0\d{3}-\d{2}-\d{2}$|^9999.\d{2}.\d{2}$|^n\.?d\.?$|^NULL$|^\[?\d{2}[-_]*\??\]?$|'
-        r'^\d$|^[A-Za-z\s]+$|^no\s+date$|^undated$|^n/a$|'
+        r'(?i)^$|^0\d{3}[-—]\d{2}[-—]\d{2}$|^9999.\d{2}.\d{2}$|^n\.?d\.?$|^NULL$|'
+        r'^\[?\d{2}[-_]*\??\]?$|^\d$|^[A-Za-z\s]+$|^no\s+date$|^undated$|^n/a$|'
         r'unknown') # <- Special case: if unknown is anywhere in string, the date must be unknown
 
     def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
+        super().__init__(unknown_date, unknown_start_date, unknown_end_date)
         self.unknown_date = unknown_date
         self.unknown_start_date = unknown_start_date
         self.unknown_end_date = unknown_end_date
 
-    def handle(self, date: str):
+    def handle(self, date: str) -> EventDate:
         if self.NO_DATE.match(date) is not None:
             return EventDate(self.unknown_date, self.unknown_start_date, self.unknown_end_date)
         return super().handle(date)
 
 
 class YearRangeHandler(BaseDateHandler):
-    YEAR_RANGE = re.compile(
-        r'(?i)^(?P<first_year>[1-2]\d{3})'
-        r'\s*(?:-|and|to)\s*'
-        r'(?P<second_year>(?:\d{2}|[1-2]\d{3}))$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2000 to 2005
+    2000-05
+    2001-00-00 and 2002-00-00
+    '''
 
-    def handle(self, date: str):
-        cleaned_date = date.replace('-00-00', '').replace(' ', '')
-        match_obj = self.YEAR_RANGE.match(cleaned_date)
+    YEAR_RANGE = re.compile(anchor(
+        (PERMISSIVE_YEAR_DATE % 'first_year') + RANGE_DELIM + (PERMISSIVE_YEAR_DATE % 'second_year')
+    ), flags=re.IGNORECASE)
+
+    ABBREV_YEAR_RANGE = re.compile(anchor(
+        (YEAR_NUM % 'first_year') + RANGE_DELIM + r'(?P<second_year>\d{2})'
+    ))
+
+    def handle(self, date: str) -> EventDate:
+        match_obj = None
+        for regex in (self.YEAR_RANGE, self.ABBREV_YEAR_RANGE):
+            match_obj = regex.match(date)
+            if match_obj is not None:
+                break
+
         if match_obj is None:
             return super().handle(date)
 
@@ -97,29 +161,24 @@ class YearRangeHandler(BaseDateHandler):
 
 
 class YearMonthDayHandler(BaseDateHandler):
-    YYYY_MM_DD = re.compile(
-        r'^(?P<year>[1-2]\d{3})'
-        r'[-\./]?'
-        r'(?P<month>1[0-2]|0?[1-9])'
-        r'[-\./]?'
-        r'(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])$')
+    ''' Handle dates like:
 
-    MM_DD_YYYY = re.compile(
-        r'^(?P<month>1[0-2]|0?[1-9])'
-        r'[-\./]?'
-        r'(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])'
-        r'[-\./]?'
-        r'(?P<year>[1-2]\d{3})$')
+    1999-09-01
+    12/01/1984
+    2014.03.03
+    '''
 
-    DD_MM_YYYY = re.compile(
-        r'^(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])'
-        r'[-\./]?'
-        r'(?P<month>1[0-2]|0?[1-9])'
-        r'[-\./]?'
-        r'(?P<year>[1-2]\d{3})$')
+    YYYY_MM_DD = re.compile(anchor(
+        (YEAR_NUM % 'year') + DELIM + (MONTH_NUM % 'month') + DELIM + (DATE_NUM % 'date')
+    ))
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    MM_DD_YYYY = re.compile(anchor(
+        (MONTH_NUM % 'month') + DELIM + (DATE_NUM % 'date') + DELIM + (YEAR_NUM % 'year')
+    ))
+
+    DD_MM_YYYY = re.compile(anchor(
+        (DATE_NUM % 'date') + DELIM + (MONTH_NUM % 'month') + DELIM + (YEAR_NUM % 'year')
+    ))
 
     def handle(self, date: str):
         match_obj = None
@@ -147,21 +206,18 @@ class YearMonthDayHandler(BaseDateHandler):
 
 
 class YearMonthRangeHandler(BaseDateHandler):
-    YEAR_MONTH_RANGE = re.compile(
-        r'^(?P<year_1>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month_1>1[0-2]|0?[1-9])'
-        r'[-\./]'
-        r'00'
-        r'\s*-\s*'
-        r'(?P<year_2>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month_2>1[0-2]|0?[1-9])'
-        r'[-\./]'
-        r'00$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2009-05-00 to 2010-02-00
+    2009.06.30 - 2011.06.30
+    2002—01—* — 2003-04-XX
+    '''
+
+    YEAR_MONTH_RANGE = re.compile(anchor(
+        (YEAR_NUM % 'year_1') + DELIM + (MONTH_NUM % 'month_1') + DELIM + UNKNOWN_PORTION + \
+        RANGE_DELIM + \
+        (YEAR_NUM % 'year_2') + DELIM + (MONTH_NUM % 'month_2') + DELIM + UNKNOWN_PORTION
+    ))
 
     def handle(self, date: str):
         match_obj = self.YEAR_MONTH_RANGE.match(date)
@@ -186,23 +242,19 @@ class YearMonthRangeHandler(BaseDateHandler):
 
 
 class YearMonthDayRangeHandler(BaseDateHandler):
-    YEAR_MONTH_DAY_RANGE = re.compile(
-        r'^(?P<year_1>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month_1>1[0-2]|0?[1-9])'
-        r'[-\./]'
-        r'(?P<date_1>3[0-1]|[1-2][0-9]|0?[1-9])'
-        r'\s*-\s*'
-        r'(?P<year_2>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month_2>1[0-2]|0?[1-9])'
-        r'[-\./]'
-        r'(?P<date_2>3[0-1]|[1-2][0-9]|0?[1-9])$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2009-05-20 to 2008-09-16
+    2005/04/06 - 2005/04/08
+    '''
 
-    def handle(self, date: str):
+    YEAR_MONTH_DAY_RANGE = re.compile(anchor(
+        (YEAR_NUM % 'year_1') + DELIM + (MONTH_NUM % 'month_1') + DELIM + (DATE_NUM % 'date_1') + \
+        RANGE_DELIM + \
+        (YEAR_NUM % 'year_2') + DELIM + (MONTH_NUM % 'month_2') + DELIM + (DATE_NUM % 'date_2')
+    ))
+
+    def handle(self, date: str) -> EventDate:
         match_obj = self.YEAR_MONTH_DAY_RANGE.match(date)
         if match_obj is None:
             return super().handle(date)
@@ -246,15 +298,14 @@ class YearMonthDayRangeHandler(BaseDateHandler):
 
 
 class ZeroMonthHandler(BaseDateHandler):
-    ZERO_MONTH = re.compile(
-        r'^(?P<year>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month>00)'
-        r'[-\./]'
-        r'(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2005-00-01
+    '''
+
+    ZERO_MONTH = re.compile(anchor(
+        (YEAR_NUM % 'year') + DELIM + UNKNOWN_PORTION + DELIM + (DATE_NUM % 'date')
+    ))
 
     def handle(self, date: str):
         match_obj = self.ZERO_MONTH.match(date)
@@ -269,15 +320,14 @@ class ZeroMonthHandler(BaseDateHandler):
 
 
 class ZeroDayHandler(BaseDateHandler):
-    ZERO_DAY = re.compile(
-        r'^(?P<year>[1-2]\d{3})'
-        r'[-\./]'
-        r'(?P<month>1[0-2]|0?[1-9])'
-        r'[-\./]'
-        r'(?P<date>00)$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2021-06-XX
+    '''
+
+    ZERO_DAY = re.compile(anchor(
+        (YEAR_NUM % 'year') + DELIM + (MONTH_NUM % 'month') + DELIM + UNKNOWN_PORTION
+    ))
 
     def handle(self, date: str):
         match_obj = self.ZERO_DAY.match(date)
@@ -295,18 +345,16 @@ class ZeroDayHandler(BaseDateHandler):
 
 
 class DecadeHandler(BaseDateHandler):
-    DECADE = re.compile(
-        r'(?i)^(?P<span>early|late)?\s*'
-        r'(?P<decade>[1-2]\d{2})(-|_|0\'?s)$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    Early 190-
+    1920s
+    '''
 
-    def has_group(self, match, group):
-        try:
-            return bool(match.group(group))
-        except IndexError:
-            return False
+    DECADE = re.compile(anchor(
+        r'(?P<span>early|late)?\s*' + \
+        (DECADE_NUM % 'decade')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.DECADE.match(date)
@@ -314,7 +362,7 @@ class DecadeHandler(BaseDateHandler):
             return super().handle(date)
 
         decade = match_obj.group('decade')
-        span = match_obj.group('span').lower() if self.has_group(match_obj, 'span') else None
+        span = match_obj.group('span').lower() if has_group(match_obj, 'span') else None
 
         if span is None:
             early_date = datetime.date(int(f'{decade}0'), 1, 1)
@@ -331,15 +379,16 @@ class DecadeHandler(BaseDateHandler):
 
 
 class DecadeRangeHandler(BaseDateHandler):
-    DECADE_RANGE = re.compile(
-        r'(?i)^'
-        r'(?P<decade_1>[1-2]\d{2})(-|_|0\'?s)'
-        r'\s*[-—]+\s*'
-        r'(?P<decade_2>[1-2]\d{2})(-|_|0\'?s)'
-        r'$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    1930s - 1940s
+    '''
+
+    DECADE_RANGE = re.compile(anchor(
+        (DECADE_NUM % 'decade_1') + \
+        RANGE_DELIM + \
+        (DECADE_NUM % 'decade_2')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.DECADE_RANGE.match(date)
@@ -358,10 +407,15 @@ class DecadeRangeHandler(BaseDateHandler):
 
 
 class YearHandler(BaseDateHandler):
-    YYYY = re.compile(r'^(?P<year>[1-2]\d{3})(?:-00-00)?$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    2017
+    2018-00-00
+    '''
+
+    YYYY = re.compile(anchor(
+        PERMISSIVE_YEAR_DATE % 'year'
+    ))
 
     def handle(self, date: str):
         match_obj = self.YYYY.match(date)
@@ -376,12 +430,15 @@ class YearHandler(BaseDateHandler):
 
 
 class SeasonHandler(BaseDateHandler):
-    SEASON = re.compile(
-        r'(?i)(?P<season>spring|easter|summer|fall|winter|christmas|late|year end|early)\s*'
-        r'(?P<year>[1-2]\d{3})')
+    ''' Handle (English) dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    Spring 2002
+    '''
+
+    SEASON = re.compile(anchor(
+        r'(?P<season>spring|easter|summer|fall|winter|christmas|late|year end|early)\s*' + \
+        (YEAR_NUM % 'year')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.SEASON.match(date)
@@ -428,21 +485,15 @@ class SeasonHandler(BaseDateHandler):
 
 
 class MonthWordYearHandler(BaseDateHandler):
-    MONTH_WORD_YEAR = re.compile(
-        r'(?i)^(?P<span>early|end of|late)?\s*'
-        r'(?P<month_name>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
-        r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
-        r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)\s*'
-        r'(?P<year>[1-2]\d{3})$')
+    ''' Handle (English) dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    Late May 2003
+    August 1974
+    '''
 
-    def has_group(self, match, group):
-        try:
-            return bool(match.group(group))
-        except IndexError:
-            return False
+    MONTH_WORD_YEAR = re.compile(anchor(
+        r'(?P<span>early|end of|late)?\s*'+ (MONTH_NAME % 'month_name') + r'\s*' + (YEAR_NUM % 'year')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.MONTH_WORD_YEAR.match(date)
@@ -455,7 +506,7 @@ class MonthWordYearHandler(BaseDateHandler):
         year = int(match_obj.group('year'))
         days_in_month = monthrange(year, month_number)[1]
 
-        span = match_obj.group('span').lower() if self.has_group(match_obj, 'span') else None
+        span = match_obj.group('span').lower() if has_group(match_obj, 'span') else None
 
         if span is None:
             early_date = datetime.date(year, month_number, 1)
@@ -475,15 +526,17 @@ class MonthWordYearHandler(BaseDateHandler):
 
 
 class MonthWordDayYearHandler(BaseDateHandler):
-    MONTH_WORD_DAY_YEAR = re.compile(
-        r'(?i)^(?P<month_name>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
-        r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
-        r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)\s*'
-        r'(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])(?:,\s*|\s+)'
-        r'(?P<year>[1-2]\d{3})$')
+    ''' Handle (English) dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    January 17, 2009
+    mar. 6 1994
+    '''
+
+    MONTH_WORD_DAY_YEAR = re.compile(anchor(
+        (MONTH_NAME % 'month_name') + r'\s*' + \
+        (DATE_NUM % 'date') + r'(?:,\s*|\s+)' + \
+        (YEAR_NUM % 'year')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.MONTH_WORD_DAY_YEAR.match(date)
@@ -501,15 +554,19 @@ class MonthWordDayYearHandler(BaseDateHandler):
 
 
 class DayMonthWordYearHandler(BaseDateHandler):
-    DAY_MONTH_WORD_YEAR = re.compile(
-        r'(?i)^(?P<date>3[0-1]|[1-2][0-9]|0?[1-9])-'
-        r'(?P<month_name>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
-        r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
-        r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)-'
-        r'(?P<year>[1-2]\d{2,4})$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    30-jan-19
+    1-mar-1908
+
+    Dates like this usually come from Excel
+    '''
+
+    DAY_MONTH_WORD_YEAR = re.compile(anchor(
+        (DATE_NUM % 'date') + DELIM + \
+        (MONTH_NAME % 'month_name') + DELIM + \
+        r'(?P<year>(?:[1-2]\d|[1-2]\d{3}))'
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.DAY_MONTH_WORD_YEAR.match(date)
@@ -529,27 +586,20 @@ class DayMonthWordYearHandler(BaseDateHandler):
 
 
 class MonthWordDayYearRangeHandler(BaseDateHandler):
-    MONTH_WORD_YEAR_RANGE = re.compile(
-        r'(?i)^(?P<month_name_1>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
-        r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
-        r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)\s*'
-        r'(?:(?P<date_1>3[0-1]|[1-2][0-9]|0?[1-9])(?:,\s*|,?\s+))?'
-        r'(?P<year_1>[1-2]\d{3})'
-        r'\s*(?:-|to)\s*'
-        r'(?P<month_name_2>jan(?:\.?|uary)?|feb(?:\.?|ruary)?|mar(?:\.?|ch)?|apr(?:\.?|il)?|'
-        r'may\.?|jun(?:\.?|e)?|jul(?:\.?|y)?|aug(?:\.?|ust)?|sep(?:\.?|t\.?|tember)?|'
-        r'oct(?:\.?|ober)?|nov(?:\.?|ember)?|dec(?:\.?|ember)?)\s*'
-        r'(?:(?P<date_2>3[0-1]|[1-2][0-9]|0?[1-9])(?:,\s*|,?\s+))?'
-        r'(?P<year_2>[1-2]\d{3})$')
+    ''' Handle dates like:
 
-    def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
-        pass
+    September 29, 2002 to September 30, 2002
+    '''
 
-    def has_group(self, match, group):
-        try:
-            return bool(match.group(group))
-        except IndexError:
-            return False
+    MONTH_WORD_YEAR_RANGE = re.compile(anchor(
+        (MONTH_NAME % 'month_name_1') + r'\s*' + \
+        (DATE_NUM % 'date_1') + r'(?:,\s*|\s+)' + \
+        (YEAR_NUM % 'year_1') + \
+        RANGE_DELIM + \
+        (MONTH_NAME % 'month_name_2') + r'\s*' + \
+        (DATE_NUM % 'date_2') + r'(?:,\s*|\s+)' + \
+        (YEAR_NUM % 'year_2')
+    ), flags=re.IGNORECASE)
 
     def handle(self, date: str):
         match_obj = self.MONTH_WORD_YEAR_RANGE.match(date)
@@ -562,7 +612,7 @@ class MonthWordDayYearRangeHandler(BaseDateHandler):
         year_1_num = int(match_obj.group('year_1'))
         days_in_month_1 = monthrange(year_1_num, month_1_num)[1]
 
-        if self.has_group(match_obj, 'date_1'):
+        if has_group(match_obj, 'date_1'):
             day_1_num = int(match_obj.group('date_1')) or 1
             if day_1_num > days_in_month_1:
                 day_1_num = days_in_month_1
@@ -575,7 +625,7 @@ class MonthWordDayYearRangeHandler(BaseDateHandler):
         year_2_num = int(match_obj.group('year_2'))
         days_in_month_2 = monthrange(year_2_num, month_2_num)[1]
 
-        if self.has_group(match_obj, 'date_2'):
+        if has_group(match_obj, 'date_2'):
             day_2_num = int(match_obj.group('date_2')) or 1
             if day_2_num > days_in_month_2:
                 day_2_num = days_in_month_2
@@ -605,6 +655,10 @@ class MonthWordDayYearRangeHandler(BaseDateHandler):
 
 
 class DateParserHandler(BaseDateHandler):
+    ''' Handle dates with dateparser as a fallback to catch more date formats.
+    This method is not ideal, as dateparser does not return a range of dates.
+    '''
+
     def __init__(self, unknown_date, unknown_start_date, unknown_end_date, **kwargs):
         super().__init__(unknown_date, unknown_start_date, unknown_end_date)
         self.dateparser_kwargs = kwargs
@@ -621,7 +675,10 @@ class DateParserHandler(BaseDateHandler):
 
 
 class YearAnywhereInDateHandler(BaseDateHandler):
-    YYYY_NO_ANCHORS = re.compile(r'(?P<year>[1-2]\d{3})')
+    ''' Handles the case where a year appears anywhere in a string.
+    '''
+
+    YYYY_NO_ANCHORS = re.compile(YEAR_NUM % 'year')
 
     def __init__(self, unknown_date, unknown_start_date, unknown_end_date):
         super().__init__(unknown_date, unknown_start_date, unknown_end_date)
