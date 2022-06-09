@@ -2,6 +2,7 @@ import pytest
 
 from atomdateparser.parser import EventDateParser
 
+
 class TestParseDatesNoStartOrEndDates_IgnoreEventActors:
     @pytest.mark.parametrize('event_dates', [
         ('n.d.'),
@@ -121,6 +122,19 @@ class TestParseDatesNoStartOrEndDates_IgnoreEventActors:
         assert parsed['eventDates'] == expected_event_dates
         assert parsed['eventStartDates'] == expected_early
         assert parsed['eventEndDates'] == expected_late
+
+    def test_handle_with_dateparser(self):
+        parser = EventDateParser(dateparser_kwargs={
+            'settings': {
+                'PREFER_DAY_OF_MONTH': 'last',
+            },
+            'languages': ['fr'],
+        })
+        parsed = parser.parse_event_dates('août 1995')
+        assert parsed['eventDates'] == '1995-08-31'
+        assert parsed['eventStartDates'] == '1995-08-31'
+        assert parsed['eventEndDates'] == '1995-08-31'
+
 
 class TestParseWithStartEndDatesPresent_IgnoreEventActors:
     @pytest.mark.parametrize('event_dates,event_start_dates,event_end_dates,expected', [

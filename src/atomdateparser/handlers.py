@@ -682,7 +682,7 @@ class DateParserHandler(BaseDateHandler):
 
     def __init__(self, unknown_date, unknown_start_date, unknown_end_date, **kwargs):
         super().__init__(unknown_date, unknown_start_date, unknown_end_date)
-        self.dateparser_kwargs = kwargs
+        self.dateparser_kwargs = kwargs.get('dateparser_kwargs') or {}
 
     def handle(self, date: str):
         ''' dateparser.parse is slow when the date is in an unrecognizable
