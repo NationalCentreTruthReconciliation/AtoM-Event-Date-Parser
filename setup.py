@@ -5,7 +5,7 @@ with open('README.md', 'r') as file_handle:
 
 setup(
     name='atomdateparser',
-    version='0.0.1',
+    version='0.0.2',
     author='Daniel Lovegrove',
     author_email='d.lovegrove11@gmail.com',
     description='Parse eventDates for AtoM CSVs',
@@ -19,5 +19,10 @@ setup(
     install_requires=[
         "dateparser>=1.0.0",
     ],
+    extras_require={
+        'dev': [
+            'pytest'
+        ]
+    },
     python_requires='>=3.6',
 )
