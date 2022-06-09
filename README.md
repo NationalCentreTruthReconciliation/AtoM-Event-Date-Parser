@@ -4,7 +4,7 @@ Date parser for eventDates, eventStartDates, eventEndDates in [AtoM](https://acc
 
 ## Installation
 
-Install with pip form [PyPi](https://pypi.org/project/atomdateparser/):
+Install with pip from [PyPi](https://pypi.org/project/atomdateparser/):
 
 ```
 pip install atomdateparser
