@@ -124,10 +124,10 @@ class TestParseDatesNoStartOrEndDates_IgnoreEventActors:
 
 class TestParseWithStartEndDatesPresent_IgnoreEventActors:
     @pytest.mark.parametrize('event_dates,event_start_dates,event_end_dates,expected', [
-        ('', '1800-01-01', '2000-01-01', '1800-2000'),
-        ('NULL', '1901-12-01', '2010-01-01', '1901-2010'),
-        ('', '2000-02-02', '2010-01-01', '2000-2010'),
-        ('No date', '2020-06-13', '1999-01-01', '1999-2020'),
+        ('', '1800-01-01', '2000-01-01', '1800 - 2000'),
+        ('NULL', '1901-12-01', '2010-01-01', '1901 - 2010'),
+        ('', '2000-02-02', '2010-01-01', '2000 - 2010'),
+        ('No date', '2020-06-13', '1999-01-01', '1999 - 2020'),
         ('', '1906-12-21', 'NULL', '1906'),
         ('', '1906-12-21', '', '1906'),
         ('UNKNOWN', 'NULL', '1907-04-19', '1907'),

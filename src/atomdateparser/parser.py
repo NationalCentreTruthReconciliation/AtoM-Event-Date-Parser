@@ -27,7 +27,7 @@ EventDateParser class handles parsing the dates in each of those three columns
 and returns clean, uniformly-formatted dates to be used to update each of those
 columns.
 '''
-from typing import Union
+from typing import Union, Optional
 import datetime
 import re
 
@@ -125,8 +125,8 @@ class EventDateParser:
             return ''
         return SANITIZE_DATE.match(date).group('sanitized')
 
-    def parse_event_dates(self, event_date: str, start_date: str = None,
-                          end_date: str = None) -> dict:
+    def parse_event_dates(self, event_date: str, start_date: Optional[str] = None,
+                          end_date: Optional[str] = None) -> dict:
         ''' Parse dates and get well-formatted string dates for each date column.
 
         Args:
@@ -303,5 +303,5 @@ class EventDateParser:
         elif min_date.year == max_date.year:
             new_event_dates = str(min_date.year)
         else:
-            new_event_dates = f'{min_date.year}-{max_date.year}'
+            new_event_dates = f'{min_date.year} - {max_date.year}'
         return new_event_dates
